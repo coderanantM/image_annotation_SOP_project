@@ -1,0 +1,174 @@
+{% extends 'annotate/base.html' %}
+
+{% block content %}
+<h2>Annotate: {{ image.title }}
+    <style>
+        /* Brush Controls */
+        .brush-controls {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background-color: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    
+        .brush-controls label {
+            font-weight: bold;
+            color: #6200ea;
+        }
+    
+        .brush-controls input[type="range"] {
+            width: 100px;
+        }
+    
+        .brush-controls input[type="color"] {
+            width: 40px;
+            height: 40px;
+            padding: 2px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    
+        #brush-width-value {
+            font-weight: bold;
+            color: #6200ea;
+        }
+    </style>
+</h2>
+
+<div class="annotation-container">
+    <!-- Brush Controls -->
+    <div class="brush-controls">
+        <label for="brush-width">Brush Width:</label>
+        <input type="range" id="brush-width" min="1" max="50" value="5">
+        <span id="brush-width-value">5</span>
+
+        <label for="brush-color">Brush Color:</label>
+        <input type="color" id="brush-color" value="#ff0000">
+    </div>
+
+    <!-- Canvas Wrapper -->
+    <div class="canvas-wrapper">
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="button-group">
+        <button id="toggle-drawing" onclick="toggleDrawing()">Enable Drawing</button>
+        <button onclick="exportImage()">Export PNG</button>
+        <button onclick="saveAnnotations()">Save Annotations</button>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.3.0/fabric.min.js"></script>
+<script>
+    const canvas = new fabric.Canvas('canvas');
+    let isDrawing = false;
+
+    // Fixed canvas dimensions
+    const CANVAS_WIDTH = 800; // Set your desired width
+    const CANVAS_HEIGHT = 600; // Set your desired height
+
+    // Set canvas size
+    canvas.setWidth(CANVAS_WIDTH);
+    canvas.setHeight(CANVAS_HEIGHT);
+
+    // Brush Controls
+    const brushWidthInput = document.getElementById('brush-width');
+    const brushWidthValue = document.getElementById('brush-width-value');
+    const brushColorInput = document.getElementById('brush-color');
+
+    brushWidthInput.addEventListener('input', () => {
+        const width = parseInt(brushWidthInput.value);
+        canvas.freeDrawingBrush.width = width;
+        brushWidthValue.textContent = width;
+    });
+
+    brushColorInput.addEventListener('input', () => {
+        const color = brushColorInput.value;
+        canvas.freeDrawingBrush.color = color;
+    });
+
+    // Load image and scale it to fit the canvas
+    const imgElement = new Image();
+    imgElement.crossOrigin = "anonymous";
+    imgElement.src = '{{ image.original_image.url }}';
+
+    imgElement.onload = function() {
+        const scaleFactor = Math.min(
+            CANVAS_WIDTH / imgElement.width,
+            CANVAS_HEIGHT / imgElement.height
+        );
+
+        const fabricImg = new fabric.Image(imgElement, {
+            left: 0,
+            top: 0,
+            scaleX: scaleFactor,
+            scaleY: scaleFactor,
+            selectable: false,
+            hasControls: false,
+            lockMovementX: true,
+            lockMovementY: true
+        });
+
+        canvas.add(fabricImg);
+        canvas.renderAll();
+
+        // Enable drawing mode
+        canvas.isDrawingMode = false; // Start with drawing disabled
+        canvas.freeDrawingBrush.width = parseInt(brushWidthInput.value);
+        canvas.freeDrawingBrush.color = brushColorInput.value;
+
+        // Load existing annotations
+        {% if image.annotations %}
+            canvas.loadFromJSON({{ image.annotations|safe }}, () => {
+                canvas.renderAll();
+            });
+        {% endif %}
+    };
+
+    imgElement.onerror = function() {
+        console.error('Failed to load image:', imgElement.src);
+        alert('Failed to load image. Please check the image URL.');
+    };
+
+    function toggleDrawing() {
+        canvas.isDrawingMode = !canvas.isDrawingMode;
+        isDrawing = !isDrawing;
+        const button = document.getElementById('toggle-drawing');
+        button.textContent = isDrawing ? 'Disable Drawing' : 'Enable Drawing';
+    }
+
+    function exportImage() {
+        const dataURL = canvas.toDataURL({
+            format: 'png',
+            quality: 1.0
+        });
+        
+        const link = document.createElement('a');
+        link.download = 'annotated-{{ image.title }}.png';
+        link.href = dataURL;
+        link.click();
+    }
+
+    function saveAnnotations() {
+        const annotations = JSON.stringify(canvas.toJSON());
+        fetch("{% url 'save_annotations' image.pk %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: `annotations=${encodeURIComponent(annotations)}`
+        })
+        .then(response => {
+            if (response.ok) alert('Annotations saved!');
+            else alert('Save failed!');
+        });
+    }
+</script>
+{% endblock %}
