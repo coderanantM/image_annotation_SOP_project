@@ -1,44 +1,54 @@
 {% extends 'annotate/base.html' %}
 
 {% block content %}
-<h2>Annotate: {{ image.title }}
-    <style>
-        /* Brush Controls */
-        .brush-controls {
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            background-color: white;
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
-    
-        .brush-controls label {
-            font-weight: bold;
-            color: #6200ea;
-        }
-    
-        .brush-controls input[type="range"] {
-            width: 100px;
-        }
-    
-        .brush-controls input[type="color"] {
-            width: 40px;
-            height: 40px;
-            padding: 2px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-    
-        #brush-width-value {
-            font-weight: bold;
-            color: #6200ea;
-        }
-    </style>
-</h2>
+<h2>Annotate: {{ image.title }}</h2>
+<style>
+    /* Brush Controls */
+    .brush-controls {
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        background-color: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .brush-controls label {
+        font-weight: bold;
+        color: #6200ea;
+    }
+
+    .brush-controls input[type="range"] {
+        width: 100px;
+    }
+
+    .brush-controls input[type="color"] {
+        width: 40px;
+        height: 40px;
+        padding: 2px;
+        border: 2px solid #ddd;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    #brush-width-value {
+        font-weight: bold;
+        color: #6200ea;
+    }
+    .canvas-wrapper {
+        margin-bottom: 20px; /* Adds space between the image and buttons */
+    }
+    .button-group {
+        margin-top: 20px; /* Adds space between the image and buttons */
+    }
+
+    form[method="post"]:first-of-type {
+        margin-top: 20px; /* Adds space above the Save Annotation button */
+    }
+
+</style>
 
 <div class="annotation-container">
     <!-- Brush Controls -->
@@ -49,6 +59,8 @@
 
         <label for="brush-color">Brush Color:</label>
         <input type="color" id="brush-color" value="#ff0000">
+
+        
     </div>
 
     <!-- Canvas Wrapper -->
@@ -61,13 +73,40 @@
         <button id="toggle-drawing" onclick="toggleDrawing()">Enable Drawing</button>
         <button onclick="exportImage()">Export PNG</button>
         <button onclick="saveAnnotations()">Save Annotations</button>
+        
+        <button id="enable-eraser" onclick="enableEraserMode()">Enable Eraser</button>
+        <button onclick="removeAllAnnotations()">Remove All Annotations</button>
     </div>
+
+    <form method="post">
+        {% csrf_token %}
+        <label for="class">Select Class:</label>
+        <select name="selected_class" id="class">
+            {% for class in classes %}
+                <option value="{{ class.id }}">{{ class.name }}</option>
+            {% endfor %}
+        </select>
+        <input type="hidden" name="annotation_data" id="annotation_data">
+        <button type="submit">Save Annotation</button>
+    </form>
+
+    <!-- Form to create a new class -->
+    <form method="post" style="margin-top: 20px;">
+        {% csrf_token %}
+        <label for="new_class">Create New Class:</label>
+        {{ class_form.name }}
+        <button type="submit" name="create_class">Save Class</button>
+    </form>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.3.0/fabric.min.js"></script>
 <script>
     const canvas = new fabric.Canvas('canvas');
     let isDrawing = false;
+    let points = [];
+    let startPoint = null;
+    let fillMode = false;
+    let eraserMode = false;
 
     // Fixed canvas dimensions
     const CANVAS_WIDTH = 800; // Set your desired width
@@ -81,6 +120,7 @@
     const brushWidthInput = document.getElementById('brush-width');
     const brushWidthValue = document.getElementById('brush-width-value');
     const brushColorInput = document.getElementById('brush-color');
+    const fillColorInput = document.getElementById('fill-color');
 
     brushWidthInput.addEventListener('input', () => {
         const width = parseInt(brushWidthInput.value);
@@ -136,11 +176,117 @@
         alert('Failed to load image. Please check the image URL.');
     };
 
+    canvas.on('mouse:down', function(o) {
+        if (fillMode) {
+            const pointer = canvas.getPointer(o.e);
+            const clickedObjects = canvas.getObjects().filter(obj => {
+                return obj instanceof fabric.Polygon && obj.containsPoint(pointer);
+            });
+    
+            if (clickedObjects.length > 0) {
+                clickedObjects.forEach(obj => obj.set({ fill: fillColorInput.value }));
+                canvas.renderAll();
+            }
+        
+        } else if (eraserMode) {
+            const pointer = canvas.getPointer(o.e);
+            const objects = canvas.getObjects();
+            for (let i = 0; i < objects.length; i++) {
+                if (objects[i].containsPoint(pointer) && objects[i].type !== 'image') {
+                    canvas.remove(objects[i]);
+                    canvas.renderAll();
+                    break;
+                }
+            }
+        } else if (canvas.isDrawingMode) {
+            isDrawing = true;
+            const pointer = canvas.getPointer(o.e);
+            points.push(pointer);
+
+            if (!startPoint) {
+                startPoint = pointer;
+                // Mark the starting point visually
+                const startCircle = new fabric.Circle({
+                    left: startPoint.x,
+                    top: startPoint.y,
+                    radius: 5,
+                    fill: 'red',
+                    selectable: false,
+                    hasControls: false,
+                    lockMovementX: true,
+                    lockMovementY: true
+                });
+                canvas.add(startCircle);
+            }
+        }
+    });
+
+    canvas.on('mouse:up', function(o) {
+        if (!fillMode && !eraserMode && canvas.isDrawingMode) {
+            isDrawing = false;
+            const pointer = canvas.getPointer(o.e);
+            points.push(pointer);
+
+            // Check if the end point is close to the start point
+            const distance = Math.sqrt(Math.pow(pointer.x - startPoint.x, 2) + Math.pow(pointer.y - startPoint.y, 2));
+            if (distance < 10) { // Adjust the threshold as needed
+                points.push(startPoint); // Close the polygon
+
+                const polygon = new fabric.Polygon(points, {
+                    fill: 'rgba(0,0,0,0.3)',
+                    stroke: 'black',
+                    strokeWidth: 2
+                });
+
+                const selectedClass = document.getElementById('class').selectedOptions[0].text;
+                const text = new fabric.Text(selectedClass, {
+                    left: startPoint.x,
+                    top: startPoint.y,
+                    fontSize: 20,
+                    fill: 'black'
+                });
+
+                canvas.add(polygon);
+                canvas.add(text);
+                points = [];
+                startPoint = null;
+            }
+        }
+    });
+
     function toggleDrawing() {
         canvas.isDrawingMode = !canvas.isDrawingMode;
         isDrawing = !isDrawing;
         const button = document.getElementById('toggle-drawing');
-        button.textContent = isDrawing ? 'Disable Drawing' : 'Enable Drawing';
+        button.textContent = canvas.isDrawingMode ? 'Disable Drawing' : 'Enable Drawing';
+    }
+
+    function enableFillMode() {
+        fillMode = !fillMode;
+        eraserMode = false;
+        const fillButton = document.getElementById('enable-fill');
+        const eraserButton = document.getElementById('enable-eraser');
+        fillButton.textContent = fillMode ? 'Disable Fill Mode' : 'Enable Fill Mode';
+        eraserButton.textContent = 'Enable Eraser';
+    }
+
+    function enableEraserMode() {
+        eraserMode = !eraserMode;
+        fillMode = false;
+        const fillButton = document.getElementById('enable-fill');
+        const eraserButton = document.getElementById('enable-eraser');
+        eraserButton.textContent = eraserMode ? 'Disable Eraser' : 'Enable Eraser';
+        fillButton.textContent = 'Enable Fill Mode';
+    }
+
+    function removeAllAnnotations() {
+        const objects = canvas.getObjects();
+        for (let i = objects.length - 1; i >= 0; i--) {
+            if (objects[i].type !== 'image') {
+                canvas.remove(objects[i]);
+            }
+        }
+        canvas.renderAll();
     }
 
     function exportImage() {

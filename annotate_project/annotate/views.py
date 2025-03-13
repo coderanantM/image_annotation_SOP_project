@@ -1,10 +1,10 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
-from .models import AnnotatedImage
-from .forms import ImageUploadForm, RegisterForm
+from .models import AnnotatedImage, AnnotationClass
+from .forms import ImageUploadForm, RegisterForm, AnnotationClassForm
 
 def register(request):
     if request.method == 'POST':
@@ -54,8 +54,27 @@ def upload_image(request):
 
 @login_required
 def annotate_image(request, pk):
-    image = AnnotatedImage.objects.get(pk=pk)
-    return render(request, 'annotate/annotate.html', {'image': image})
+    image = get_object_or_404(AnnotatedImage, pk=pk)
+    classes = AnnotationClass.objects.filter(user=request.user)
+
+    if request.method == 'POST':
+        if 'create_class' in request.POST:
+            class_form = AnnotationClassForm(request.POST)
+            if class_form.is_valid():
+                new_class = class_form.save(commit=False)
+                new_class.user = request.user
+                new_class.save()
+                return redirect('annotate_image', pk=pk)
+        else:
+            annotation_data = request.POST.get('annotation_data')
+            selected_class = request.POST.get('selected_class')
+            # Save the annotation data and class to the database
+            image.annotations = annotation_data
+            image.save()
+            return redirect('home')
+
+    class_form = AnnotationClassForm()
+    return render(request, 'annotate/annotate.html', {'image': image, 'classes': classes, 'class_form': class_form})
 
 @login_required
 @require_POST
